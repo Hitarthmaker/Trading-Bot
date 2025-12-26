@@ -1,140 +1,77 @@
-from datetime  import datetime
 import yfinance as yf
+import pandas as pd
+import numpy as np
 import time
+from datetime import datetime
 
-class MyTradingStrategy:
-    def __init__(self,name):
-        self.__name = name
+SYMBOL = "AAPL"
+INTERVAL = "1m"
+PERIOD = "1d"
+SHORT_WINDOW = 1
+LONG_WINDOW = 2
+INITIAL_BALANCE = 100000
+TRADE_QUANTITY = 10
 
-    def generate_signal(self,price_data):
-        print("This method is intended to be over ridden")
-        return "Hold"
-    
-    @property
-    def name(self):
-        return self.__name
-    class MySmaTradingStrategy(MyTradingStrategy):
-    def __init__(self,swindow,lwindow):
-        self.__swindow = swindow
-        self.__lwindow = lwindow
-        super().__init__("My SMA Trading Strategy")
-    
-    def generate_signal(self,price_data):
-        if len(price_data[-self.__lwindow:]) < self.__lwindow:
-            return "Hold"
-        short_avg = sum(price_data[-self.__swindow:])/self.__swindow 
-        long_avg = sum(price_data[-self.__lwindow:])/self.__lwindow 
+balance = INITIAL_BALANCE
+position = 0
+entry_price = 0
 
-        if short_avg > long_avg:
-            return "Buy"
-        elif short_avg < long_avg:
-            return "Sell"
-        else:
-            return "Hold"
-        
-    @property
-    def swindow(self):
-        return self.__swindow
-    
-    @property
-    def lwindow(self):
-        return self.__lwindow
+def fetch_data():
+    df = yf.download(
+        tickers=SYMBOL,
+        period=PERIOD,
+        interval=INTERVAL,
+        auto_adjust=False,
+        progress=False
+    )
+    return df.dropna()
 
-class MyTrade:
-    def __init__(self,strategy_name, signal, amount):
-        self.__strategy_name = strategy_name
-        self.__signal = signal
-        self.__amount = amount
-        self.__timestamp = datetime.now()
-    
-    def execute(self):
-        print(f"Executed {self.__signal}  trade with the strategy {self.__strategy_name} with amount  {self.__amount} at the time {self.__timestamp}")
+def apply_strategy(df):
+    df["SMA_Short"] = df["Close"].rolling(SHORT_WINDOW).mean()
+    df["SMA_Long"] = df["Close"].rolling(LONG_WINDOW).mean()
+    return df
 
+def trade(df):
+    global balance, position, entry_price
 
-    @property
-    def strategy_name(self):
-        return self.__strategy_name
-    
-    @property
-    def signal(self):
-        return self.__signal
+    price = df["Close"].iloc[-1].item()
+    short_ma = df["SMA_Short"].iloc[-1]
+    long_ma = df["SMA_Long"].iloc[-1]
 
-    @property
-    def amount(self):
-        return self.__amount
-    
-    @property
-    def timestamp(self):
-        return self.__timestamp
+    if np.isnan(short_ma) or np.isnan(long_ma):
+        return
 
-class MockTradingAPI:
-    def __init__(self,balance):
-        self.__balance = balance
-    
-    def place_order(self,trade,price):
-        if trade.signal == "Buy" and self.__balance >= trade.amount * price:
-            self.__balance -= trade.amount * price
-            print(f"Placed a buy trade at the {price}, Remaining Balance :{self.__balance}")
-        elif trade.signal == "Sell":
-            self.__balance += trade.amount * price
-            print(f"Placed a Sell trade at the {price}, Remaining Balance :{self.__balance}")
-        else:
-            print(f"Insufficient balance or Invalid Signal")
+    if short_ma > long_ma and position == 0:
+        cost = price * TRADE_QUANTITY
+        if balance >= cost:
+            balance -= cost
+            position = 1
+            entry_price = price
+            print(f"[{datetime.now()}] BUY {TRADE_QUANTITY} @ {price:.2f}")
+            print(f"Balance: {balance:.2f}")
 
-    @property
-    def balance(self):
-        return self.__balance
+    elif short_ma < long_ma and position == 1:
+        balance += price * TRADE_QUANTITY
+        profit = (price - entry_price) * TRADE_QUANTITY
+        position = 0
+        print(f"[{datetime.now()}] SELL {TRADE_QUANTITY} @ {price:.2f}")
+        print(f"Profit: {profit:.2f}")
+        print(f"Balance: {balance:.2f}")
 
-class MyTradingSystem:
-    def __init__(self,api,strategy,symbol):
-        self.__api = api
-        self.__strategy = strategy
-        self.__symbol = symbol
-        self.__price_data =[]
+def run_bot():
+    print("Trading Bot Started")
+    print(f"Symbol: {SYMBOL}")
+    print(f"Initial Balance: {INITIAL_BALANCE}")
 
-    def fetch_price_data(self):
-        data = yf.download(tickers = self.__symbol, period = '1d', interval = '1m')
-        if not data.empty:
-            price = data['Close'].iloc[-1]
-            self.__price_data.append(price)
-            if len(self.__price_data) > self.__strategy.lwindow:
-                self.__strategy.lwindow.pop(0)
-                print(f"Fetched new price data: {price}")
-            else:
-                print("No data fetched")
-    
-    
-    def run(self):
-        self.fetch_price_data()
-        signal = self.__strategy.generate_signal(self.__price_data)
-        print(f"Generated Sinal: {signal}")
-        if signal in ["Sell", "Buy"]:
-            trade = MyTrade(self.__strategy,signal,1)
-            trade.execute()
-            self.__api.place_order(trade,self.__price_data[-1])
+    while True:
+        try:
+            df = fetch_data()
+            df = apply_strategy(df)
+            trade(df)
+            time.sleep(60)
+        except Exception as e:
+            print("Error:", e)
+            time.sleep(60)
 
-    @property
-    def api(self):
-        return self.__api
-
-    @property
-    def strategy(self):
-        return self.__strategy
-
-    @property
-    def symbol(self):
-        return self.__symbol
-
-    @property
-    def balance(self):
-        return self.__price_data
-
-symbol = 'AAPL'
-api = MockTradingAPI(balance=10000)
-strategy = MySmaTradingStrategy(3,5)
-system = MyTradingSystem(api,strategy,'AAPL')
-
-for _ in range(3):
-    system.run()
-    print(f"Remaining balance: {api.balance}")
-    time.sleep(2)
+if __name__ == "__main__":
+    run_bot()
